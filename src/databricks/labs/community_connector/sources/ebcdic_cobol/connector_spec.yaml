@@ -1,0 +1,27 @@
+display_name: EBCDIC COBOL
+connection:
+  auth_methods:
+    - name: volume_manifest
+      description: >
+        Reads an EBCDIC connector manifest from a Unity Catalog Volume.
+        The pipeline identity needs READ VOLUME on the manifest, copybooks,
+        copybook libraries, and source data paths.
+      parameters:
+        - name: config_path
+          type: string
+          required: true
+          description: >
+            Absolute path to the connector JSON manifest, for example
+            /Volumes/catalog/schema/volume/ebcdic/config.json.
+    - name: inline_manifest
+      description: >
+        Uses an inline JSON manifest. Intended for development and compact
+        configurations; Volume manifests are recommended for production.
+      parameters:
+        - name: config_json
+          type: string
+          required: true
+          description: >
+            JSON object containing a non-empty tables mapping.
+
+external_options_allowlist: "batch_rows,display_pic_as_string,encoding,file_glob,floating_point_format,improved_null_detection,include_file_metadata,max_files_per_batch,null_on_error,record_format,recursive,strict_integral_precision,strict_sign_overpunch,string_trimming_policy,utf16_big_endian,variable_size_occurs"

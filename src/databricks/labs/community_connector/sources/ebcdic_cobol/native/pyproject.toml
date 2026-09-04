@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "ebcdic-rust-canary"
+version = "0.1.0"
+description = "Native EBCDIC/COBOL decoder for the Lakeflow community connector"
+requires-python = ">=3.11"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "ebcdic_rust_canary"

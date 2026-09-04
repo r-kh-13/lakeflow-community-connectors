@@ -1,0 +1,12 @@
+[package]
+name = "ebcdic-rust-canary"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "ebcdic_rust_canary"
+crate-type = ["cdylib"]
+
+[dependencies]
+memmap2 = "0.9"
+pyo3 = { version = "0.26", features = ["extension-module", "abi3-py311"] }
