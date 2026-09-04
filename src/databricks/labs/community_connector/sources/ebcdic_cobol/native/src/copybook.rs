@@ -1,3 +1,7 @@
+// Copybook type and storage-size behavior adapted from AbsaOSS/cobrix.
+// Copyright 2018 ABSA Group Limited. Apache License 2.0.
+// See ../../THIRD_PARTY_NOTICES.md.
+
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 

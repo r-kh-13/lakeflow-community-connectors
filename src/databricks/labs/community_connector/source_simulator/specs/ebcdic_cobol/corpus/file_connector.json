@@ -1,0 +1,7 @@
+[
+  {
+    "source": "unity_catalog_volume",
+    "transport": "fuse",
+    "http_endpoints": 0
+  }
+]

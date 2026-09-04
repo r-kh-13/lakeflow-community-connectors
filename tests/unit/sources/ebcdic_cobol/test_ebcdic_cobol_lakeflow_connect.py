@@ -5,11 +5,20 @@ from __future__ import annotations
 import gzip
 import json
 import os
+import tempfile
 from decimal import Decimal
+from pathlib import Path
 
+import pytest
+
+from databricks.labs.community_connector.sources.ebcdic_cobol import (
+    ebcdic_cobol as connector_module,
+)
 from databricks.labs.community_connector.sources.ebcdic_cobol.ebcdic_cobol import (
     EbcdicCobolLakeflowConnect,
 )
+from tests.unit.sources.test_partition_suite import SupportsPartitionedStreamTests
+from tests.unit.sources.test_suite import LakeflowConnectTests
 
 _COPYBOOK = """
        01 RECORD.
@@ -18,6 +27,43 @@ _COPYBOOK = """
           05 AMOUNT PIC S9(3)V9(2) COMP-3.
 """
 _RECORD = bytes.fromhex("c1d3c9c3c5404040f0f0f4f212345c")
+
+
+class _FakeCompiledDecoder:
+    """CI stand-in for the separately distributed native wheel."""
+
+    @staticmethod
+    def schema():
+        return [
+            ("NAME", "string", 0, 8, 1),
+            ("CUSTOMER_ID", "integer", 8, 4, 1),
+            ("AMOUNT", "decimal(5,2)", 12, 3, 1),
+        ]
+
+    @staticmethod
+    def _batches(data: bytes, batch_size: int):
+        rows = [
+            {"NAME": "ALICE", "CUSTOMER_ID": 42, "AMOUNT": Decimal("123.45")}
+            for _ in range(len(data) // len(_RECORD))
+        ]
+        for offset in range(0, len(rows), batch_size):
+            yield rows[offset : offset + batch_size]
+
+    def iter_batches(self, data: bytes, *, batch_size: int, **_):
+        return self._batches(data, batch_size)
+
+    def iter_file_batches(self, path: str, *, batch_size: int, **_):
+        return self._batches(Path(path).read_bytes(), batch_size)
+
+
+@pytest.fixture(autouse=True)
+def _fake_native_decoder(monkeypatch):
+    monkeypatch.setenv("LAKEFLOW_EBCDIC_ALLOW_LOCAL_PATHS", "1")
+    monkeypatch.setattr(
+        connector_module,
+        "_compile_decoder",
+        lambda *_: _FakeCompiledDecoder(),
+    )
 
 
 def _connector(tmp_path, *, max_files_per_batch=1000, declared_schema=False):
@@ -49,7 +95,7 @@ def _connector(tmp_path, *, max_files_per_batch=1000, declared_schema=False):
     )
 
 
-def test_schema_and_native_partition_read(tmp_path):
+def test_schema_and_partition_read(tmp_path):
     connector, data_path = _connector(tmp_path)
     source = data_path / "customers-001.dat"
     source.write_bytes(_RECORD * 2)
@@ -111,3 +157,87 @@ def test_gzip_partition(tmp_path):
     partition = connector.get_partitions("customers", {})[0]
     rows = list(connector.read_partition("customers", partition, {}))
     assert rows[0]["AMOUNT"] == Decimal("123.45")
+
+
+def test_non_volume_paths_require_explicit_local_test_opt_in(monkeypatch, tmp_path):
+    monkeypatch.delenv("LAKEFLOW_EBCDIC_ALLOW_LOCAL_PATHS")
+    data_path = tmp_path / "data"
+    data_path.mkdir()
+    copybook = tmp_path / "customers.cpy"
+    copybook.write_text(_COPYBOOK)
+    manifest = {
+        "tables": {
+            "customers": {
+                "data_path": str(data_path),
+                "copybook_path": str(copybook),
+            }
+        }
+    }
+    with pytest.raises(ValueError, match="must be under /Volumes"):
+        EbcdicCobolLakeflowConnect({"config_json": json.dumps(manifest)})
+
+
+class TestEbcdicCobolConnector(
+    LakeflowConnectTests,
+    SupportsPartitionedStreamTests,
+):
+    connector_class = EbcdicCobolLakeflowConnect
+    simulator_source = "ebcdic_cobol"
+    replay_config = {"config_json": "{}"}
+    sample_records = 10
+    _volume: tempfile.TemporaryDirectory | None = None
+    _previous_local_path_setting: str | None = None
+
+    @classmethod
+    def setup_class(cls):
+        cls._previous_local_path_setting = os.environ.get("LAKEFLOW_EBCDIC_ALLOW_LOCAL_PATHS")
+        os.environ["LAKEFLOW_EBCDIC_ALLOW_LOCAL_PATHS"] = "1"
+        cls._volume = tempfile.TemporaryDirectory(prefix="ebcdic-connector-ci-")
+        root = Path(cls._volume.name)
+        data = root / "data"
+        data.mkdir()
+        (data / "customers.dat").write_bytes(_RECORD * 2)
+        copybook = root / "customers.cpy"
+        copybook.write_text(_COPYBOOK)
+        cls.replay_config = {
+            "config_json": json.dumps(
+                {
+                    "tables": {
+                        "customers": {
+                            "data_path": str(data),
+                            "copybook_path": str(copybook),
+                            "schema": [
+                                {"name": "NAME", "type": "string"},
+                                {"name": "CUSTOMER_ID", "type": "integer"},
+                                {"name": "AMOUNT", "type": "decimal(5,2)"},
+                            ],
+                            "file_glob": "*.dat",
+                            "record_format": "F",
+                        }
+                    }
+                }
+            )
+        }
+        cls.config = None
+        try:
+            super().setup_class()
+        except Exception:
+            cls._cleanup()
+            raise
+
+    @classmethod
+    def teardown_class(cls):
+        try:
+            super().teardown_class()
+        finally:
+            cls._cleanup()
+
+    @classmethod
+    def _cleanup(cls):
+        if cls._volume is not None:
+            cls._volume.cleanup()
+            cls._volume = None
+        if cls._previous_local_path_setting is None:
+            os.environ.pop("LAKEFLOW_EBCDIC_ALLOW_LOCAL_PATHS", None)
+        else:
+            os.environ["LAKEFLOW_EBCDIC_ALLOW_LOCAL_PATHS"] = cls._previous_local_path_setting

@@ -232,7 +232,7 @@ fn expand_copybook_source(copybook: &str, copybooks: HashMap<String, String>) ->
 }
 
 #[pymodule]
-fn ebcdic_rust_canary(module: &Bound<'_, PyModule>) -> PyResult<()> {
+fn lakeflow_ebcdic_decoder(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<CompiledCopybook>()?;
     module.add_class::<RecordBatchIterator>()?;
     module.add_function(wrap_pyfunction!(compile_copybook, module)?)?;

@@ -3,11 +3,12 @@ requires = ["maturin>=1.9,<2"]
 build-backend = "maturin"
 
 [project]
-name = "ebcdic-rust-canary"
+name = "lakeflow-ebcdic-decoder"
 version = "0.1.0"
 description = "Native EBCDIC/COBOL decoder for the Lakeflow community connector"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-module-name = "ebcdic_rust_canary"
+module-name = "lakeflow_ebcdic_decoder"
+include = ["THIRD_PARTY_NOTICES.md"]

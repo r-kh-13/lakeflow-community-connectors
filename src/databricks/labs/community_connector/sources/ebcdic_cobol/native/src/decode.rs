@@ -1,3 +1,7 @@
+// COBOL numeric decoding behavior adapted from AbsaOSS/cobrix.
+// Copyright 2018 ABSA Group Limited. Apache License 2.0.
+// See ../../THIRD_PARTY_NOTICES.md.
+
 use std::collections::HashMap;
 
 use crate::copybook::{Field, Layout, Pic, SignSeparate, Usage};

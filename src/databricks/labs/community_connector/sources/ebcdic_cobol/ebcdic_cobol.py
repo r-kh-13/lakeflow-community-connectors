@@ -54,6 +54,7 @@ _BOOLEAN_OPTIONS = {
 _COPYBOOK_SUFFIXES = {".cob", ".copybook", ".cpy"}
 _DEFAULT_BATCH_ROWS = 8192
 _DEFAULT_MAX_FILES_PER_BATCH = 1000
+_ALLOW_LOCAL_PATHS_ENV = "LAKEFLOW_EBCDIC_ALLOW_LOCAL_PATHS"
 _TEXT_CACHE: dict[tuple[str, int], str] = {}
 
 
@@ -271,7 +272,7 @@ def _load_manifest(options: dict[str, str]) -> dict:
         except json.JSONDecodeError as error:
             raise ValueError(f"Invalid config_json: {error}") from error
     else:
-        config_path = os.path.abspath(str(path))
+        config_path = _validated_source_path(str(path), "config_path")
         with open(config_path, encoding="utf-8") as handle:
             result = json.load(handle)
     if not isinstance(result, dict):
@@ -281,9 +282,23 @@ def _load_manifest(options: dict[str, str]) -> dict:
 
 def _required_path(config: dict, option: str, table_name: str) -> str:
     value = str(config.get(option, "")).strip()
+    try:
+        return _validated_source_path(value, option)
+    except ValueError as error:
+        raise ValueError(f"Table {table_name!r}: {error}") from error
+
+
+def _validated_source_path(value: str, option: str) -> str:
+    absolute = os.path.abspath(value)
     if not value or not os.path.isabs(value):
-        raise ValueError(f"Table {table_name!r} requires absolute {option}, got {value!r}")
-    return value
+        raise ValueError(f"{option} must be an absolute path, got {value!r}")
+    if absolute == "/Volumes" or absolute.startswith("/Volumes/"):
+        return absolute
+    if os.environ.get(_ALLOW_LOCAL_PATHS_ENV) == "1":
+        return absolute
+    raise ValueError(
+        f"{option} must be under /Volumes; set {_ALLOW_LOCAL_PATHS_ENV}=1 only for local tests"
+    )
 
 
 def _bool_option(config: dict, name: str, default: bool) -> bool:
@@ -340,6 +355,7 @@ def _load_copybook_bundle(config: dict) -> tuple[str, dict[str, str]]:
     if not library_path:
         return source, {}
     root = Path(str(library_path))
+    _validated_source_path(str(root), "copybook_library_path")
     if not root.is_dir():
         raise FileNotFoundError(f"copybook_library_path does not exist: {root}")
     library = {}
@@ -386,10 +402,10 @@ def _compile_decoder(
     # still report an actionable missing-wheel error.
     # pylint: disable=import-outside-toplevel
     try:
-        from ebcdic_rust_canary import compile_copybook
+        from lakeflow_ebcdic_decoder import compile_copybook
     except ImportError as error:
         raise RuntimeError(
-            "The native ebcdic-rust-canary wheel is required on the Lakeflow "
+            "The native lakeflow-ebcdic-decoder wheel is required on the Lakeflow "
             "pipeline environment for both x86_64 and aarch64 workers. "
             f"Native import failed with: {error!r}"
         ) from error

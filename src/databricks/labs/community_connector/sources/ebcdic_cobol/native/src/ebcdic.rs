@@ -1,3 +1,7 @@
+// Adapted from AbsaOSS/cobrix BinaryUtils.ebcdic2ascii.
+// Copyright 2018 ABSA Group Limited. Apache License 2.0.
+// See ../../THIRD_PARTY_NOTICES.md.
+
 /// Cobrix invariant EBCDIC→Unicode table (`BinaryUtils.ebcdic2ascii`).
 pub const EBCDIC_INVARIANT: [char; 256] = [
     ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '\n', ' ', ' ', ' ', ' ', ' ',

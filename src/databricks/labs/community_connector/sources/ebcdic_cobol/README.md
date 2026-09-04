@@ -78,6 +78,9 @@ Create the community connector connection with:
 ```
 
 The pipeline identity needs `READ VOLUME` on every referenced Volume.
+Runtime paths are restricted to `/Volumes/...`. Local unit tests may opt in to
+temporary filesystem paths with `LAKEFLOW_EBCDIC_ALLOW_LOCAL_PATHS=1`; do not
+set that variable in deployed pipelines.
 
 ## Pipeline object
 
@@ -104,8 +107,8 @@ wheel plus the ABI3 manylinux wheel matching the pipeline architecture. Publish
 both architecture builds:
 
 ```text
-ebcdic_rust_canary-0.1.0-cp311-abi3-manylinux2014_x86_64.whl
-ebcdic_rust_canary-0.1.0-cp311-abi3-manylinux2014_aarch64.whl
+lakeflow_ebcdic_decoder-0.1.0-cp310-abi3-manylinux2014_x86_64.whl
+lakeflow_ebcdic_decoder-0.1.0-cp310-abi3-manylinux2014_aarch64.whl
 ```
 
 Do not append a PEP 508 marker directly to a Volume wheel path in an SDP
@@ -114,7 +117,7 @@ to IPython `%pip`, where the semicolon is interpreted by the shell. The
 September 2026 e2-demo validation used the `aarch64` wheel directly.
 
 The generated community-connector Python source imports
-`ebcdic_rust_canary` at runtime; it does not embed platform-specific native
+`lakeflow_ebcdic_decoder` at runtime; it does not embed platform-specific native
 code.
 
 ## Output metadata

@@ -1,3 +1,9 @@
+// IBM hexadecimal floating-point conversion adapted from AbsaOSS/cobrix,
+// whose implementation is based on Enthought's ibm2ieee library.
+// Cobrix: Copyright 2018 ABSA Group Limited, Apache License 2.0.
+// ibm2ieee: Copyright 2018 Enthought, Inc., BSD 3-Clause.
+// See ../../THIRD_PARTY_NOTICES.md.
+
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 

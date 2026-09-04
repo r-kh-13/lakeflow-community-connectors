@@ -58,7 +58,7 @@ impl RowFormat {
     }
 }
 
-#[pyclass(module = "ebcdic_rust_canary")]
+#[pyclass(module = "lakeflow_ebcdic_decoder")]
 #[derive(Clone)]
 pub struct CompiledCopybook {
     pub(crate) layout: Layout,
@@ -199,7 +199,7 @@ impl CompiledCopybook {
     }
 }
 
-#[pyclass(module = "ebcdic_rust_canary")]
+#[pyclass(module = "lakeflow_ebcdic_decoder")]
 pub struct RecordBatchIterator {
     input: InputData,
     layout: Layout,

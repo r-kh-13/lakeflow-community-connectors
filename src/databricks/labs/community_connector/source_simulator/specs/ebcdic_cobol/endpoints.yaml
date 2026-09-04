@@ -1,0 +1,4 @@
+# File-only connector: all source access is through UC Volume FUSE paths.
+# The empty endpoint list lets the generic connector harness run in simulate
+# mode while asserting that no unexpected HTTP request is made.
+endpoints: []
