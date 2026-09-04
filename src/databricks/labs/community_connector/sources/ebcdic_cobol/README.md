@@ -19,6 +19,8 @@ and does not require a classic cluster, SparkContext, RDDs, or a custom JAR.
 - Python 3.10 or later.
 - The connector wheel and a `lakeflow-ebcdic-decoder` wheel compatible with the
   serverless architecture.
+- PyArrow and Spark Python Data Source direct-Arrow support when
+  `arrow_enabled=true`; set it to `false` for older runtimes.
 
 All runtime paths are restricted to `/Volumes/...`.
 
@@ -74,6 +76,7 @@ existing path, and do not backdate its modification time.
       "encoding": "EBCDIC",
       "batch_rows": 8192,
       "max_files_per_batch": 1000,
+      "arrow_enabled": true,
       "include_file_metadata": true
     }
   }
@@ -149,6 +152,7 @@ Each entry under `tables` supports:
 | `encoding` | No | `EBCDIC` | Text/display encoding. See Decoder options. |
 | `batch_rows` | No | `8192` | Maximum decoded rows retained per native output batch. |
 | `max_files_per_batch` | No | `1000` | Admission control for one Lakeflow micro-batch. |
+| `arrow_enabled` | No | `true` | Yield PyArrow RecordBatches directly to Spark instead of row-wise Python values. |
 | `variable_size_occurs` | No | `false` | Derive concatenated `F` record sizes from ODO counters. |
 | `include_file_metadata` | No | `true` | Add source path, mtime, and record index columns. |
 | `null_on_error` | No | `false` | Return `NULL` for malformed field values instead of failing. |
@@ -289,6 +293,8 @@ before mixing them into a production table.
 ## Performance guidance
 
 - Use multiple immutable files to expose parallel Spark partitions.
+- Keep `arrow_enabled=true` on Spark runtimes supporting direct Arrow batches;
+  this bypasses row-wise Python-to-JVM conversion.
 - Keep `batch_rows` between 4,096 and 16,384 unless row width is extreme.
 - Use `max_files_per_batch` to bound one update.
 - Prefer uncompressed files for maximum parallel throughput.

@@ -347,8 +347,10 @@ def register_lakeflow_source(spark):
                     or retrieving the data (such as specifying table namespaces).
             Returns:
                 A two-element tuple of (records, offset).
-                records: An iterator of records as JSON-compatible dicts. Do NOT convert
-                    values according to get_table_schema(); the framework handles that.
+                records: An iterator of records as JSON-compatible dicts, or
+                    ``pyarrow.RecordBatch`` objects for the Spark direct-Arrow path.
+                    Do NOT convert row values according to get_table_schema(); the
+                    framework handles row conversion.
                 offset: A dict representing the position after this batch.
             """
 
@@ -433,7 +435,8 @@ def register_lakeflow_source(spark):
                     :meth:`get_partitions`.
                 table_options: A dictionary of options for accessing the table.
             Returns:
-                An iterator of records as JSON-compatible dicts.
+                An iterator of JSON-compatible record dictionaries or PyArrow
+                RecordBatch objects for Spark's direct-Arrow reader path.
             """
 
 
@@ -618,6 +621,7 @@ def register_lakeflow_source(spark):
         "variable_size_occurs",
         "recursive",
         "include_file_metadata",
+        "arrow_enabled",
     }
     _COPYBOOK_SUFFIXES = {".cob", ".copybook", ".cpy"}
     _DEFAULT_BATCH_ROWS = 8192
@@ -750,7 +754,7 @@ def register_lakeflow_source(spark):
             table_name: str,
             partition: dict,
             table_options: dict[str, str],
-        ) -> Iterator[dict]:
+        ) -> Iterator[object]:
             # pylint: disable=too-many-locals
             config = self._table_config(table_name, table_options)
             path = str(partition["path"])
@@ -763,6 +767,16 @@ def register_lakeflow_source(spark):
             )
             variable_size_occurs = _bool_option(config, "variable_size_occurs", False)
             include_metadata = _bool_option(config, "include_file_metadata", True)
+            arrow_enabled = _bool_option(config, "arrow_enabled", True)
+            arrow_module = _load_pyarrow() if arrow_enabled else None
+            arrow_schema = (
+                _spark_schema_to_arrow(
+                    self.get_table_schema(table_name, table_options),
+                    arrow_module,
+                )
+                if arrow_enabled
+                else None
+            )
             mtime_ns = int(partition["mtime_ns"])
 
             if path.lower().endswith(".gz"):
@@ -785,13 +799,21 @@ def register_lakeflow_source(spark):
 
             record_index = 0
             for batch in batches:
+                output_rows = []
                 for row in batch:
                     if include_metadata:
                         row["__source_file"] = path
                         row["__source_mtime_ns"] = mtime_ns
                         row["__record_index"] = record_index
                     record_index += 1
-                    yield row
+                    output_rows.append(row)
+                if arrow_enabled:
+                    yield arrow_module.RecordBatch.from_pylist(
+                        output_rows,
+                        schema=arrow_schema,
+                    )
+                else:
+                    yield from output_rows
 
         def _table_config(
             self,
@@ -812,6 +834,7 @@ def register_lakeflow_source(spark):
                     "recursive",
                     "variable_size_occurs",
                     "include_file_metadata",
+                    "arrow_enabled",
                 }:
                     config[key] = value
             return config
@@ -1040,6 +1063,51 @@ def register_lakeflow_source(spark):
         return fields
 
 
+    def _load_pyarrow():
+        try:
+            import pyarrow as pa  # pylint: disable=import-outside-toplevel
+        except ImportError as error:
+            raise RuntimeError(
+                "arrow_enabled=true requires PyArrow in the Spark worker environment"
+            ) from error
+        return pa
+
+
+    def _spark_schema_to_arrow(schema: StructType, pa):
+        def convert(data_type: DataType):
+            if isinstance(data_type, StringType):
+                return pa.string()
+            if isinstance(data_type, IntegerType):
+                return pa.int32()
+            if isinstance(data_type, LongType):
+                return pa.int64()
+            if isinstance(data_type, FloatType):
+                return pa.float32()
+            if isinstance(data_type, DoubleType):
+                return pa.float64()
+            if isinstance(data_type, BinaryType):
+                return pa.binary()
+            if isinstance(data_type, DecimalType):
+                return pa.decimal128(data_type.precision, data_type.scale)
+            if isinstance(data_type, ArrayType):
+                return pa.list_(convert(data_type.elementType))
+            if isinstance(data_type, StructType):
+                return pa.struct(
+                    [
+                        pa.field(field.name, convert(field.dataType), nullable=field.nullable)
+                        for field in data_type.fields
+                    ]
+                )
+            raise ValueError(f"Unsupported Spark type for Arrow output: {data_type}")
+
+        return pa.schema(
+            [
+                pa.field(field.name, convert(field.dataType), nullable=field.nullable)
+                for field in schema.fields
+            ]
+        )
+
+
     def _split_top_level(value: str) -> list[str]:
         result = []
         start = 0
@@ -1116,6 +1184,24 @@ def register_lakeflow_source(spark):
         return decoded
 
 
+    def _parse_or_passthrough_records(records, schema: StructType):
+        """Convert row records while passing PyArrow RecordBatches directly to Spark."""
+        iterator = iter(records)
+        try:
+            first = next(iterator)
+        except StopIteration:
+            return iter(())
+
+        first_type = type(first)
+        if first_type.__name__ == "RecordBatch" and first_type.__module__.startswith("pyarrow."):
+            return chain((first,), iterator)
+
+        return chain(
+            (parse_value(first, schema),),
+            map(lambda value: parse_value(value, schema), iterator),
+        )
+
+
     # PySpark's DataSource API requires camelCase method names and inherits
     # semantics from the parent class, so per-method docstrings are redundant.
     # pylint: disable=invalid-name,missing-function-docstring
@@ -1155,7 +1241,7 @@ def register_lakeflow_source(spark):
                 records, offset = self.lakeflow_connect.read_table(
                     self.options[TABLE_NAME], start, table_options
                 )
-            rows = map(lambda x: parse_value(x, self.schema), records)
+            rows = _parse_or_passthrough_records(records, self.schema)
             return rows, offset
 
         def readBetweenOffsets(self, start: dict, end: dict) -> Iterator[tuple]:
@@ -1224,7 +1310,7 @@ def register_lakeflow_source(spark):
             records = self.lakeflow_connect.read_partition(
                 self.table_name, partition_desc, self.table_options
             )
-            return map(lambda x: parse_value(x, self.schema), records)
+            return _parse_or_passthrough_records(records, self.schema)
 
         def prepareForTriggerAvailableNow(self) -> None:
             # No need to do anything special here. Everything is handled in the __init__ method.
@@ -1269,7 +1355,7 @@ def register_lakeflow_source(spark):
                 )
             else:
                 records, _ = self.lakeflow_connect.read_table(self.table_name, None, self.options)
-            return map(lambda x: parse_value(x, self.schema), records)
+            return _parse_or_passthrough_records(records, self.schema)
 
         def _read_table_metadata(self):
             table_names = _decode_list_of_str_option(

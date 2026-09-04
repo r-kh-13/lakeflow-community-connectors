@@ -51,7 +51,8 @@ class SupportsPartition(ABC):
                 :meth:`get_partitions`.
             table_options: A dictionary of options for accessing the table.
         Returns:
-            An iterator of records as JSON-compatible dicts.
+            An iterator of JSON-compatible record dictionaries or PyArrow
+            RecordBatch objects for Spark's direct-Arrow reader path.
         """
 
 

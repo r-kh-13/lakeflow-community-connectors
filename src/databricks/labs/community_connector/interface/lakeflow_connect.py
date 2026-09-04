@@ -109,8 +109,10 @@ class LakeflowConnect(ABC):
                 or retrieving the data (such as specifying table namespaces).
         Returns:
             A two-element tuple of (records, offset).
-            records: An iterator of records as JSON-compatible dicts. Do NOT convert
-                values according to get_table_schema(); the framework handles that.
+            records: An iterator of records as JSON-compatible dicts, or
+                ``pyarrow.RecordBatch`` objects for the Spark direct-Arrow path.
+                Do NOT convert row values according to get_table_schema(); the
+                framework handles row conversion.
             offset: A dict representing the position after this batch.
         """
 

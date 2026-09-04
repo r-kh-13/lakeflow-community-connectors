@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lakeflow-community-connectors-ebcdic-cobol"
-version = "0.1.3"
+version = "0.2.0"
 description = "EBCDIC/COBOL file connector for Lakeflow Community Connectors"
 requires-python = ">=3.10"
 dependencies = [

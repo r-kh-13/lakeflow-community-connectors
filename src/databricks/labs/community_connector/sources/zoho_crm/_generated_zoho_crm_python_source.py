@@ -8,6 +8,7 @@
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from itertools import chain
 from typing import (
     Any,
     Iterator,
@@ -350,8 +351,10 @@ def register_lakeflow_source(spark):
                     or retrieving the data (such as specifying table namespaces).
             Returns:
                 A two-element tuple of (records, offset).
-                records: An iterator of records as JSON-compatible dicts. Do NOT convert
-                    values according to get_table_schema(); the framework handles that.
+                records: An iterator of records as JSON-compatible dicts, or
+                    ``pyarrow.RecordBatch`` objects for the Spark direct-Arrow path.
+                    Do NOT convert row values according to get_table_schema(); the
+                    framework handles row conversion.
                 offset: A dict representing the position after this batch.
             """
 
@@ -436,7 +439,8 @@ def register_lakeflow_source(spark):
                     :meth:`get_partitions`.
                 table_options: A dictionary of options for accessing the table.
             Returns:
-                An iterator of records as JSON-compatible dicts.
+                An iterator of JSON-compatible record dictionaries or PyArrow
+                RecordBatch objects for Spark's direct-Arrow reader path.
             """
 
 
@@ -2198,6 +2202,24 @@ def register_lakeflow_source(spark):
         return decoded
 
 
+    def _parse_or_passthrough_records(records, schema: StructType):
+        """Convert row records while passing PyArrow RecordBatches directly to Spark."""
+        iterator = iter(records)
+        try:
+            first = next(iterator)
+        except StopIteration:
+            return iter(())
+
+        first_type = type(first)
+        if first_type.__name__ == "RecordBatch" and first_type.__module__.startswith("pyarrow."):
+            return chain((first,), iterator)
+
+        return chain(
+            (parse_value(first, schema),),
+            map(lambda value: parse_value(value, schema), iterator),
+        )
+
+
     # PySpark's DataSource API requires camelCase method names and inherits
     # semantics from the parent class, so per-method docstrings are redundant.
     # pylint: disable=invalid-name,missing-function-docstring
@@ -2237,7 +2259,7 @@ def register_lakeflow_source(spark):
                 records, offset = self.lakeflow_connect.read_table(
                     self.options[TABLE_NAME], start, table_options
                 )
-            rows = map(lambda x: parse_value(x, self.schema), records)
+            rows = _parse_or_passthrough_records(records, self.schema)
             return rows, offset
 
         def readBetweenOffsets(self, start: dict, end: dict) -> Iterator[tuple]:
@@ -2306,7 +2328,7 @@ def register_lakeflow_source(spark):
             records = self.lakeflow_connect.read_partition(
                 self.table_name, partition_desc, self.table_options
             )
-            return map(lambda x: parse_value(x, self.schema), records)
+            return _parse_or_passthrough_records(records, self.schema)
 
         def prepareForTriggerAvailableNow(self) -> None:
             # No need to do anything special here. Everything is handled in the __init__ method.
@@ -2351,7 +2373,7 @@ def register_lakeflow_source(spark):
                 )
             else:
                 records, _ = self.lakeflow_connect.read_table(self.table_name, None, self.options)
-            return map(lambda x: parse_value(x, self.schema), records)
+            return _parse_or_passthrough_records(records, self.schema)
 
         def _read_table_metadata(self):
             table_names = _decode_list_of_str_option(

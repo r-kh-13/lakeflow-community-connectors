@@ -1,17 +1,20 @@
-from typing import Iterator
 import json
-from pyspark.sql.types import StructType, StructField, StringType, ArrayType
+from itertools import chain
+from typing import Iterator
+
 from pyspark.sql.datasource import (
     DataSource,
+    DataSourceReader,
     DataSourceStreamReader,
     InputPartition,
     SimpleDataSourceStreamReader,
-    DataSourceReader,
 )
 from pyspark.sql.streaming.datasource import (
     ReadAllAvailable,
     SupportsTriggerAvailableNow,
 )
+from pyspark.sql.types import ArrayType, StringType, StructField, StructType
+
 from databricks.labs.community_connector.interface import (
     LakeflowConnect,
     SupportsNamespaces,
@@ -19,7 +22,6 @@ from databricks.labs.community_connector.interface import (
     SupportsPartitionedStream,
 )
 from databricks.labs.community_connector.libs.utils import parse_value
-
 
 # =============================================================================
 # TEMPORARY WORKAROUND: Placeholder for merge script replacement
@@ -95,6 +97,24 @@ def _decode_dict_option(option_name: str, value: str | None) -> dict:
     return decoded
 
 
+def _parse_or_passthrough_records(records, schema: StructType):
+    """Convert row records while passing PyArrow RecordBatches directly to Spark."""
+    iterator = iter(records)
+    try:
+        first = next(iterator)
+    except StopIteration:
+        return iter(())
+
+    first_type = type(first)
+    if first_type.__name__ == "RecordBatch" and first_type.__module__.startswith("pyarrow."):
+        return chain((first,), iterator)
+
+    return chain(
+        (parse_value(first, schema),),
+        map(lambda value: parse_value(value, schema), iterator),
+    )
+
+
 # PySpark's DataSource API requires camelCase method names and inherits
 # semantics from the parent class, so per-method docstrings are redundant.
 # pylint: disable=invalid-name,missing-function-docstring
@@ -134,7 +154,7 @@ class LakeflowStreamReader(SimpleDataSourceStreamReader, SupportsTriggerAvailabl
             records, offset = self.lakeflow_connect.read_table(
                 self.options[TABLE_NAME], start, table_options
             )
-        rows = map(lambda x: parse_value(x, self.schema), records)
+        rows = _parse_or_passthrough_records(records, self.schema)
         return rows, offset
 
     def readBetweenOffsets(self, start: dict, end: dict) -> Iterator[tuple]:
@@ -203,7 +223,7 @@ class LakeflowPartitionedStreamReader(DataSourceStreamReader, SupportsTriggerAva
         records = self.lakeflow_connect.read_partition(
             self.table_name, partition_desc, self.table_options
         )
-        return map(lambda x: parse_value(x, self.schema), records)
+        return _parse_or_passthrough_records(records, self.schema)
 
     def prepareForTriggerAvailableNow(self) -> None:
         # No need to do anything special here. Everything is handled in the __init__ method.
@@ -248,7 +268,7 @@ class LakeflowBatchReader(DataSourceReader):
             )
         else:
             records, _ = self.lakeflow_connect.read_table(self.table_name, None, self.options)
-        return map(lambda x: parse_value(x, self.schema), records)
+        return _parse_or_passthrough_records(records, self.schema)
 
     def _read_table_metadata(self):
         table_names = _decode_list_of_str_option(

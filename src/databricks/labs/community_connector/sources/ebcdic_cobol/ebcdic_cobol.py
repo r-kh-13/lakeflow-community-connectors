@@ -50,6 +50,7 @@ _BOOLEAN_OPTIONS = {
     "variable_size_occurs",
     "recursive",
     "include_file_metadata",
+    "arrow_enabled",
 }
 _COPYBOOK_SUFFIXES = {".cob", ".copybook", ".cpy"}
 _DEFAULT_BATCH_ROWS = 8192
@@ -182,7 +183,7 @@ class EbcdicCobolLakeflowConnect(LakeflowConnect, SupportsPartitionedStream):
         table_name: str,
         partition: dict,
         table_options: dict[str, str],
-    ) -> Iterator[dict]:
+    ) -> Iterator[object]:
         # pylint: disable=too-many-locals
         config = self._table_config(table_name, table_options)
         path = str(partition["path"])
@@ -195,6 +196,16 @@ class EbcdicCobolLakeflowConnect(LakeflowConnect, SupportsPartitionedStream):
         )
         variable_size_occurs = _bool_option(config, "variable_size_occurs", False)
         include_metadata = _bool_option(config, "include_file_metadata", True)
+        arrow_enabled = _bool_option(config, "arrow_enabled", True)
+        arrow_module = _load_pyarrow() if arrow_enabled else None
+        arrow_schema = (
+            _spark_schema_to_arrow(
+                self.get_table_schema(table_name, table_options),
+                arrow_module,
+            )
+            if arrow_enabled
+            else None
+        )
         mtime_ns = int(partition["mtime_ns"])
 
         if path.lower().endswith(".gz"):
@@ -217,13 +228,21 @@ class EbcdicCobolLakeflowConnect(LakeflowConnect, SupportsPartitionedStream):
 
         record_index = 0
         for batch in batches:
+            output_rows = []
             for row in batch:
                 if include_metadata:
                     row["__source_file"] = path
                     row["__source_mtime_ns"] = mtime_ns
                     row["__record_index"] = record_index
                 record_index += 1
-                yield row
+                output_rows.append(row)
+            if arrow_enabled:
+                yield arrow_module.RecordBatch.from_pylist(
+                    output_rows,
+                    schema=arrow_schema,
+                )
+            else:
+                yield from output_rows
 
     def _table_config(
         self,
@@ -244,6 +263,7 @@ class EbcdicCobolLakeflowConnect(LakeflowConnect, SupportsPartitionedStream):
                 "recursive",
                 "variable_size_occurs",
                 "include_file_metadata",
+                "arrow_enabled",
             }:
                 config[key] = value
         return config
@@ -470,6 +490,51 @@ def _parse_declared_schema(value) -> list[StructField]:
             )
         )
     return fields
+
+
+def _load_pyarrow():
+    try:
+        import pyarrow as pa  # pylint: disable=import-outside-toplevel
+    except ImportError as error:
+        raise RuntimeError(
+            "arrow_enabled=true requires PyArrow in the Spark worker environment"
+        ) from error
+    return pa
+
+
+def _spark_schema_to_arrow(schema: StructType, pa):
+    def convert(data_type: DataType):
+        if isinstance(data_type, StringType):
+            return pa.string()
+        if isinstance(data_type, IntegerType):
+            return pa.int32()
+        if isinstance(data_type, LongType):
+            return pa.int64()
+        if isinstance(data_type, FloatType):
+            return pa.float32()
+        if isinstance(data_type, DoubleType):
+            return pa.float64()
+        if isinstance(data_type, BinaryType):
+            return pa.binary()
+        if isinstance(data_type, DecimalType):
+            return pa.decimal128(data_type.precision, data_type.scale)
+        if isinstance(data_type, ArrayType):
+            return pa.list_(convert(data_type.elementType))
+        if isinstance(data_type, StructType):
+            return pa.struct(
+                [
+                    pa.field(field.name, convert(field.dataType), nullable=field.nullable)
+                    for field in data_type.fields
+                ]
+            )
+        raise ValueError(f"Unsupported Spark type for Arrow output: {data_type}")
+
+    return pa.schema(
+        [
+            pa.field(field.name, convert(field.dataType), nullable=field.nullable)
+            for field in schema.fields
+        ]
+    )
 
 
 def _split_top_level(value: str) -> list[str]:

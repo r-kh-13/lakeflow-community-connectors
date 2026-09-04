@@ -77,6 +77,7 @@ def _connector(tmp_path, *, max_files_per_batch=1000, declared_schema=False):
         "file_glob": "*.dat*",
         "record_format": "F",
         "max_files_per_batch": max_files_per_batch,
+        "arrow_enabled": False,
     }
     if declared_schema:
         table_config["schema"] = [
@@ -159,6 +160,26 @@ def test_gzip_partition(tmp_path):
     assert rows[0]["AMOUNT"] == Decimal("123.45")
 
 
+def test_arrow_partition_returns_record_batch(tmp_path):
+    pa = pytest.importorskip("pyarrow")
+    connector, data_path = _connector(tmp_path)
+    (data_path / "customers.dat").write_bytes(_RECORD * 2)
+    partition = connector.get_partitions("customers", {})[0]
+    batches = list(
+        connector.read_partition(
+            "customers",
+            partition,
+            {"arrow_enabled": "true"},
+        )
+    )
+    assert len(batches) == 1
+    assert isinstance(batches[0], pa.RecordBatch)
+    assert batches[0].num_rows == 2
+    assert batches[0].schema.field("AMOUNT").type == pa.decimal128(5, 2)
+    name_index = batches[0].schema.get_field_index("NAME")
+    assert batches[0].column(name_index).to_pylist() == ["ALICE", "ALICE"]
+
+
 def test_non_volume_paths_require_explicit_local_test_opt_in(monkeypatch, tmp_path):
     monkeypatch.delenv("LAKEFLOW_EBCDIC_ALLOW_LOCAL_PATHS")
     data_path = tmp_path / "data"
@@ -213,6 +234,7 @@ class TestEbcdicCobolConnector(
                             ],
                             "file_glob": "*.dat",
                             "record_format": "F",
+                            "arrow_enabled": False,
                         }
                     }
                 }

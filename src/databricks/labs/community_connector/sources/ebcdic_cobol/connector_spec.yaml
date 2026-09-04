@@ -24,4 +24,4 @@ connection:
           description: >
             JSON object containing a non-empty tables mapping.
 
-external_options_allowlist: "batch_rows,display_pic_as_string,encoding,file_glob,floating_point_format,improved_null_detection,include_file_metadata,max_files_per_batch,null_on_error,record_format,recursive,strict_integral_precision,strict_sign_overpunch,string_trimming_policy,utf16_big_endian,variable_size_occurs"
+external_options_allowlist: "arrow_enabled,batch_rows,display_pic_as_string,encoding,file_glob,floating_point_format,improved_null_detection,include_file_metadata,max_files_per_batch,null_on_error,record_format,recursive,strict_integral_precision,strict_sign_overpunch,string_trimming_policy,utf16_big_endian,variable_size_occurs"

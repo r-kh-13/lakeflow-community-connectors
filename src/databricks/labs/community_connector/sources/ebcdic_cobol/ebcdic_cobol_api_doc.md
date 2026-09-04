@@ -38,3 +38,7 @@ Each file uses one copybook and one framing mode:
 
 Malformed values can become `null` using `null_on_error`. Framing errors remain
 fatal because continuing would lose record boundaries.
+
+With `arrow_enabled=true` (default), partition readers emit PyArrow
+`RecordBatch` objects directly to Spark. Set it to `false` to use the
+row-compatible fallback on runtimes without direct Arrow batch support.
