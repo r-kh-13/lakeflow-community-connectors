@@ -1,4 +1,4 @@
-"""Focused unit tests kept with the connector source package."""
+"""Unit tests for the EBCDIC/COBOL Volume connector."""
 
 from __future__ import annotations
 
@@ -20,20 +20,27 @@ _COPYBOOK = """
 _RECORD = bytes.fromhex("c1d3c9c3c5404040f0f0f4f212345c")
 
 
-def _connector(tmp_path, *, max_files_per_batch=1000):
+def _connector(tmp_path, *, max_files_per_batch=1000, declared_schema=False):
     data_path = tmp_path / "data"
     data_path.mkdir()
     copybook_path = tmp_path / "customers.cpy"
     copybook_path.write_text(_COPYBOOK)
+    table_config = {
+        "data_path": str(data_path),
+        "copybook_path": str(copybook_path),
+        "file_glob": "*.dat*",
+        "record_format": "F",
+        "max_files_per_batch": max_files_per_batch,
+    }
+    if declared_schema:
+        table_config["schema"] = [
+            {"name": "NAME", "type": "string"},
+            {"name": "CUSTOMER_ID", "type": "integer"},
+            {"name": "AMOUNT", "type": "decimal(5,2)"},
+        ]
     manifest = {
         "tables": {
-            "customers": {
-                "data_path": str(data_path),
-                "copybook_path": str(copybook_path),
-                "file_glob": "*.dat*",
-                "record_format": "F",
-                "max_files_per_batch": max_files_per_batch,
-            }
+            "customers": table_config,
         }
     }
     return (
@@ -43,7 +50,6 @@ def _connector(tmp_path, *, max_files_per_batch=1000):
 
 
 def test_schema_and_native_partition_read(tmp_path):
-    """Schema inference and mmap decoding produce typed rows with lineage."""
     connector, data_path = _connector(tmp_path)
     source = data_path / "customers-001.dat"
     source.write_bytes(_RECORD * 2)
@@ -66,8 +72,20 @@ def test_schema_and_native_partition_read(tmp_path):
     assert rows[0]["__source_file"] == str(source)
 
 
+def test_declared_schema_does_not_load_native_decoder(monkeypatch, tmp_path):
+    connector, _ = _connector(tmp_path, declared_schema=True)
+    monkeypatch.setattr(
+        connector,
+        "_compiled_decoder",
+        lambda _: (_ for _ in ()).throw(AssertionError("native decoder loaded")),
+    )
+    schema = connector.get_table_schema("customers", {})
+    assert schema.simpleString().startswith(
+        "struct<NAME:string,CUSTOMER_ID:int,AMOUNT:decimal(5,2)"
+    )
+
+
 def test_incremental_offsets_cap_files_per_batch(tmp_path):
-    """Streaming offsets advance deterministically by one configured file."""
     connector, data_path = _connector(tmp_path, max_files_per_batch=1)
     first = data_path / "001.dat"
     second = data_path / "002.dat"
@@ -86,7 +104,6 @@ def test_incremental_offsets_cap_files_per_batch(tmp_path):
 
 
 def test_gzip_partition(tmp_path):
-    """Gzip inputs use the bounded in-memory native batch path."""
     connector, data_path = _connector(tmp_path)
     source = data_path / "customers.dat.gz"
     with gzip.open(source, "wb") as handle:

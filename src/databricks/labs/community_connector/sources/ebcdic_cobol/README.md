@@ -28,6 +28,11 @@ Create a JSON manifest on a UC Volume:
       "data_path": "/Volumes/main/ebcdic/landing/customers",
       "copybook_path": "/Volumes/main/ebcdic/copybooks/customers.cpy",
       "copybook_library_path": "/Volumes/main/ebcdic/copybooks/includes",
+      "schema": [
+        {"name": "NAME", "type": "string"},
+        {"name": "CUSTOMER_ID", "type": "integer"},
+        {"name": "AMOUNT", "type": "decimal(5,2)"}
+      ],
       "file_glob": "*.dat",
       "recursive": false,
       "record_format": "F",
@@ -40,6 +45,12 @@ Create a JSON manifest on a UC Volume:
   }
 }
 ```
+
+`schema` is optional for direct Spark Data Source use, where it can be inferred
+from the copybook. Declare it for managed ingestion pipelines: Databricks
+performs partial analysis in an environment that may not install
+architecture-specific native wheels. Runtime decoding still validates and
+produces values according to the copybook.
 
 Use `record_format` `F`, `V`, or `VB`. Set `variable_size_occurs` to `true`
 for concatenated variable-size `F` records containing `OCCURS DEPENDING ON`.
@@ -75,9 +86,12 @@ The pipeline identity needs `READ VOLUME` on every referenced Volume.
   "table": {
     "source_table": "customers",
     "destination_table": "customers_raw",
-    "table_configuration": {
-      "ingestion_mode": "append",
-      "max_files_per_batch": "500"
+    "connector_options": {
+      "community_connector_options": {
+        "options": {
+          "max_files_per_batch": "500"
+        }
+      }
     }
   }
 }
@@ -86,13 +100,18 @@ The pipeline identity needs `READ VOLUME` on every referenced Volume.
 ## Native wheel
 
 The connector and native decoder are separate wheels. Install the connector
-wheel plus the matching native wheel in the serverless pipeline environment.
-Publish both ABI3 manylinux wheels and use environment markers:
+wheel plus the ABI3 manylinux wheel matching the pipeline architecture. Publish
+both architecture builds:
 
 ```text
-ebcdic_rust_canary-0.1.0-cp311-abi3-manylinux2014_x86_64.whl ; platform_machine == "x86_64"
-ebcdic_rust_canary-0.1.0-cp311-abi3-manylinux2014_aarch64.whl ; platform_machine == "aarch64"
+ebcdic_rust_canary-0.1.0-cp311-abi3-manylinux2014_x86_64.whl
+ebcdic_rust_canary-0.1.0-cp311-abi3-manylinux2014_aarch64.whl
 ```
+
+Do not append a PEP 508 marker directly to a Volume wheel path in an SDP
+`environment.dependencies` entry. The environment installer passes that entry
+to IPython `%pip`, where the semicolon is interpreted by the shell. The
+September 2026 e2-demo validation used the `aarch64` wheel directly.
 
 The generated community-connector Python source imports
 `ebcdic_rust_canary` at runtime; it does not embed platform-specific native

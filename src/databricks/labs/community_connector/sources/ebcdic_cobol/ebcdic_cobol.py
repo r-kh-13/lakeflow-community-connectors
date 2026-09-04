@@ -90,11 +90,15 @@ class EbcdicCobolLakeflowConnect(LakeflowConnect, SupportsPartitionedStream):
 
     def get_table_schema(self, table_name: str, table_options: dict[str, str]) -> StructType:
         config = self._table_config(table_name, table_options)
-        decoder = self._compiled_decoder(config)
-        fields = [
-            StructField(name, _parse_spark_type(data_type), nullable=True)
-            for name, data_type, _, _, _ in decoder.schema()
-        ]
+        declared_schema = config.get("schema")
+        if declared_schema is not None:
+            fields = _parse_declared_schema(declared_schema)
+        else:
+            decoder = self._compiled_decoder(config)
+            fields = [
+                StructField(name, _parse_spark_type(data_type), nullable=True)
+                for name, data_type, _, _, _ in decoder.schema()
+            ]
         if _bool_option(config, "include_file_metadata", True):
             fields.extend(
                 [
@@ -386,7 +390,8 @@ def _compile_decoder(
     except ImportError as error:
         raise RuntimeError(
             "The native ebcdic-rust-canary wheel is required on the Lakeflow "
-            "pipeline environment for both x86_64 and aarch64 workers"
+            "pipeline environment for both x86_64 and aarch64 workers. "
+            f"Native import failed with: {error!r}"
         ) from error
     kwargs = {}
     for name, value in decoder_options:
@@ -432,6 +437,23 @@ def _parse_spark_type(specification: str) -> DataType:
             fields.append(StructField(name, _parse_spark_type(data_type), nullable=True))
         return StructType(fields)
     raise ValueError(f"Unsupported native Spark type: {specification}")
+
+
+def _parse_declared_schema(value) -> list[StructField]:
+    if not isinstance(value, list) or not value:
+        raise ValueError("Table schema must be a non-empty list")
+    fields = []
+    for item in value:
+        if not isinstance(item, dict) or not item.get("name") or not item.get("type"):
+            raise ValueError("Each table schema field requires 'name' and 'type'")
+        fields.append(
+            StructField(
+                str(item["name"]),
+                _parse_spark_type(str(item["type"])),
+                nullable=bool(item.get("nullable", True)),
+            )
+        )
+    return fields
 
 
 def _split_top_level(value: str) -> list[str]:
