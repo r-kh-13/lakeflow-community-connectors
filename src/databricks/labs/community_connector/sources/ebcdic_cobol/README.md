@@ -126,3 +126,8 @@ When `include_file_metadata` is enabled, each row includes:
 - `__record_index`.
 
 These columns provide stable lineage and can form a downstream uniqueness key.
+
+## Validation evidence
+
+- [Single-record managed ingestion](E2E_VALIDATION.md)
+- [Million-row banking stress test](BANKING_STRESS_VALIDATION.md)
